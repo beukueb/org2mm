@@ -11,6 +11,13 @@ def convertNode(orgNode,xmlParentNode):
     except AttributeError:
         #Add logic for adding paragraph comments
         pass
+    #Check todo state
+    try:
+        if orgNode.todo:
+            icon = ET.SubElement(xmlNode,'icon')
+            icon.set('BUILTIN','full-1')
+    except AttributeError:
+        pass
     
 def convert(orgfile,startnode='Start',outfile=None):
     """
@@ -25,9 +32,8 @@ def convert(orgfile,startnode='Start',outfile=None):
     rootXML.append(ET.Comment('To view this file, download free mind mapping \
 software FreeMind from http://freemind.sourceforge.net'
     ))
-    rootNodeXML = ET.SubElement(rootXML,'node')
-    rootNodeXML.set('TEXT',startnode)
-    convertNode(orgbase.root,rootNodeXML)
+    orgbase.root.heading = startnode
+    convertNode(orgbase.root,rootXML)
     
     if not outfile:
         outfile = sys.stdout
