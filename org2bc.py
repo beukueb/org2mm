@@ -4,10 +4,13 @@ from PyOrgMode import PyOrgMode
 from urllib import request
 import json
 
-def syncBasecamps(orgfile,bc_settings):
+def syncBasecamps(orgfile,orgoutfile,bc_settings):
     #Load org file
     orgbase = PyOrgMode.OrgDataStructure()
     orgbase.load_from_file(orgfile)
+
+    if not orgoutfile:
+        orgoutfile = orgfile.replace('.org','_bcsync.org')
     
     #Set todo states -> this should be pushed to PyOrgMode
     todostates = set()
@@ -27,6 +30,10 @@ def syncBasecamps(orgfile,bc_settings):
     orgbase.load_from_file(orgfile)
     bc_settings['todostates'] = todostates
 
+    #Load basecamp projects
+    projects = getBasecampProjects(bc_settings)
+    bc_settings['projects'] = projects
+    
     #Search for first order (*) elements linked to a basecamp
     for node in orgbase.root.content:
         if type(node) == PyOrgMode.OrgNode.Element:
@@ -35,6 +42,11 @@ def syncBasecamps(orgfile,bc_settings):
                     for p in c.content:
                         if p.name == 'basecamp':
                             syncBasecamp(node,basecamp=p.value,bc_settings=bc_settings)
+    #Include other basecamp todos
+    includeBCassignedTodos(bc_settings,orgbase)
+
+    #Save new org file
+    orgbase.save_to_file(orgoutfile)                            
 
 def syncBasecamp(node,basecamp,bc_settings):
     #Retrieve basecampID
@@ -45,12 +57,11 @@ def syncBasecamp(node,basecamp,bc_settings):
                 if p.name == 'basecampID':
                     basecampID = p.value
             if not basecampID:
-                basecampID = getBasecampID(basecamp,bc_settings)
+                basecampID = getBasecampID(bc_settings['projects'],basecamp)
                 prop = PyOrgMode.OrgDrawer.Property(name='basecampID',
                                                     value=str(basecampID))
                 prop.indent = ' '+' '*node.level
                 c.append(prop)
-                #orgbase.save_to_file(orgfile.replace('.org','_bcsync.org'))
     #Retrieve todosets
     req = request.Request('https://3.basecampapi.com/{}/projects/{}.json'.format(
         bc_settings['ACCOUNT_ID'],basecampID))
@@ -128,17 +139,57 @@ def syncBasecamp(node,basecamp,bc_settings):
                     except AttributeError:
                         pass
     
-def getBasecampID(basecamp,bc_settings):
+
+def getBasecampProjects(bc_settings):
     req = request.Request('https://3.basecampapi.com/{}/projects.json'.format(
         bc_settings['ACCOUNT_ID']))
     req.add_header('Authorization','Bearer {}'.format(
         bc_settings['ACCESS_TOKEN']))
     r = request.urlopen(req)
     projects = json.loads(r.read().decode())
+    return projects
+    
+def getBasecampID(projects,basecamp):
     for project in projects:
         if project['name'] == basecamp:
             basecampID = project['id']
             return basecampID
+
+def includeBCassignedTodos(bc_settings,orgbase,assignee='Christophe Van Neste'):
+    bctodo_present = False
+    for bctodo_node in orgbase.root.content:
+        if (type(bctodo_node) == PyOrgMode.OrgNode.Element and
+            bctodo_node.heading == 'Basecamp todos'):
+            bctodo_present = True
+            bctodo_node.content = []
+            break
+    if not bctodo_present:
+        bctodo_node = PyOrgMode.OrgNode.Element()
+        bctodo_node.level = 1
+        bctodo_node.heading = 'Basecamp todos'
+        orgbase.root.append(bctodo_node)
+    for project in bc_settings['projects']:
+        pname = project['name']
+        prid = project['id']
+        for app in project['dock']:
+            if app['name'] == 'todoset':
+                req = request.Request(app['url'].replace('.json','/todolists.json'))
+                req.add_header('Authorization','Bearer {}'.format(bc_settings['ACCESS_TOKEN']))
+                r = request.urlopen(req)
+                todosets = json.loads(r.read().decode())
+                for todoset in todosets:
+                    req = request.Request(todoset['todos_url'])
+                    req.add_header('Authorization','Bearer {}'.format(bc_settings['ACCESS_TOKEN']))
+                    r = request.urlopen(req)
+                    todos = json.loads(r.read().decode())
+                    for todo in todos:
+                        for assigneed in todo['assignees']:
+                            if assigneed['name'] == assignee:
+                                ntodo = PyOrgMode.OrgNode.Element()
+                                ntodo.heading = '{} -> {} -> {}'.format(
+                                    pname,todoset['name'],todo['content'])
+                                ntodo.level = 2
+                                bctodo_node.append(ntodo)
 
 if __name__ == "__main__":
     import argparse
@@ -156,4 +207,4 @@ if __name__ == "__main__":
     import pickle
     bc_settings = pickle.load(open('/home/christophe/repos/org2mm/bc_settings.pickle','rb'))
 
-    syncBasecamps(argv.outline,bc_settings)
+    syncBasecamps(argv.outline,argv.output,bc_settings)
